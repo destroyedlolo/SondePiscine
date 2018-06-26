@@ -126,8 +126,8 @@ public:
 	* Gestion de la communication
 	********/
 #include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
-#include <WiFiUdp.h>
+#include <ESP8266mDNS.h>	// Publication Avahi
+#include <WiFiUdp.h>		// L'OTA
 #include <ArduinoOTA.h>
 
 bool OTA;
