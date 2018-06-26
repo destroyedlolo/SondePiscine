@@ -133,7 +133,8 @@ public:
 bool OTA;
 
 #include <Maison.h>		// Paramètres de mon réseau
-#include "Duree.h"
+#include <LFUtilities.h>
+#include <LFUtilities/Duree.h>
 
 extern "C" {
   #include "user_interface.h"
