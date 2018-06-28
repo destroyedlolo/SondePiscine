@@ -6,6 +6,11 @@
  *	provided by "Laurent Faillie"
  *	Licence : "Creative Commons Attribution-NonCommercial 3.0"
  *
+ *	Dependances :
+ *		- PubSubClient.h
+ *			Il faut la version permettant un QoS > 0 (/ESP/TrucAstuces/MQTT_ESP8266/)
+ *
+ *
  *	22/05/2018 - La tension d'alimentation est calculée par plusieurs échantillonages
  *	21/06/2018 - Ajoute de l'OTA
  */
@@ -53,9 +58,15 @@ String MQTT_Command = MQTT_Topic + "Command";
 #endif
 #define DEF_EVEILLE	60				// Durée où il faut rester éveillé après avoir recu une commande
 
+
 	/******
 	* Fin du paramétrage
 	*******/
+
+#include <Maison.h>		// Paramètres de mon réseau
+#include <LFUtilities.h>
+#include <LFUtilities/Duree.h>
+#include <LFUtilities/SafeMQTTClient.h>
 
 
 	/*******
@@ -97,15 +108,17 @@ Config EveilInteractif;	// Temps pendant lequel il faut rester éveillé en atte
 
 class Contexte : public KeepInRTC::KeepMe {
 	struct {
-		bool debug;	// Affiche des messages de debugage
+		bool debug;			// Affiche des messages de debugage
+		uint32_t maxMQTT;	// Durée maximum de connexion MQTT
 	} data;
 
 public:
 	Contexte() : KeepInRTC::KeepMe( kir, (uint32_t *)&this->data, sizeof(this->data) ) {}
 
 	bool begin( void ){
-		if( !kir.isValid() ){
-			this->setDebug(false);
+		if( !kir.isValid() ){	// Valeurs par défaut
+			this->data.debug = false;
+			this->data.maxMQTT = SMC_MQTT_MAX_RETRY;
 			this->save();
 			return true;
 		}
@@ -120,6 +133,15 @@ public:
 	bool getDebug( void ){
 		return this->data.debug;
 	}
+
+	void setMaxMQTT( uint32_t val ){
+		this->data.maxMQTT = val;
+		this->save();
+	}
+
+	uint32_t getMaxMQTT( void ){
+		return this->data.maxMQTT;
+	}
 } ctx;
 
 	/*******
@@ -132,10 +154,6 @@ public:
 
 bool OTA;
 
-#include <Maison.h>		// Paramètres de mon réseau
-#include <LFUtilities.h>
-#include <LFUtilities/Duree.h>
-
 extern "C" {
   #include "user_interface.h"
 }
@@ -146,7 +164,6 @@ ADC_MODE(ADC_VCC);	// Nécessaire pour avoir la tension d'alimentation
 OneWire oneWire(ONE_WIRE_BUS, true);	// Initialise la bibliothèque en activant le pullup (https://github.com/destroyedlolo/OneWire)
 OWBus bus(&oneWire);
 
-#include <PubSubClient.h>	// Il faut la version permettant un QoS > 0 (/ESP/TrucAstuces/MQTT_ESP8266/)
 WiFiClient clientWiFi;
 PubSubClient clientMQTT(clientWiFi);
 
@@ -189,6 +206,8 @@ bool func_status( const String & ){
 	msg += Sommeil.getConsigne();
 	msg += "\nEveil suite à commande : ";
 	msg += EveilInteractif.getConsigne();
+	msg += "\nTemps maximum pour la connexion MQTT : ";
+	msg += ctx.getMaxMQTT();
 	msg += ctx.getDebug() ? "\nMessages de Debug" : "\nPas de message de Debug";
 #ifdef DEV
 	msg += "\nFlash : ";
@@ -240,6 +259,20 @@ bool func_att( const String &arg ){
 	return true;
 }
 
+bool func_maxMQTT( const String &arg ){
+	int n = arg.toInt();
+
+	if( n > 0){
+		ctx.setMaxMQTT( n );
+		String msg = "maxMQTT changée à ";
+		msg += n;
+		logmsg( msg );
+	} else
+		logmsg( "Argument invalide : maxMQTT inchangée" );
+
+	return true;
+}
+
 bool func_dodo( const String & ){
 	EveilInteractif.setProchain( 0 );
 	return false;
@@ -281,6 +314,7 @@ const struct _command {
 	{ "status", "Configuration courante", func_status },
 	{ "delai", "Délai entre chaque échantillons (secondes)", func_delai },
 	{ "attente", "Attend <n> secondes l'arrivée de nouvelles commandes", func_att },
+	{ "maxMQTT", "Durée maximum d'attente pour se connecter au broker", func_maxMQTT },
 	{ "dodo", "Sort du mode interactif et place l'ESP en sommeil", func_dodo },
 	{ "reste", "Reste encore <n> secondes en mode interactif", func_reste },
 	{ "debug", "Active (1) ou non (0) les messages de debug", func_debug },
