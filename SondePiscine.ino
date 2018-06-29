@@ -54,9 +54,10 @@ String MQTT_Command = MQTT_Topic + "Command";
 	/* Paramètres par défaut */
 	/* Durées (secondes) */
 #ifndef DEF_DUREE_SOMMEIL
-#	define DEF_DUREE_SOMMEIL 300	// Sommeil entre 2 acquisitions
+#	define DEF_DUREE_SOMMEIL 300	// Sommeil entre 2 acquisitions (5 minutes)
 #endif
 #define DEF_EVEILLE	60				// Durée où il faut rester éveillé après avoir recu une commande
+#define DEF_DELAI_RECONNEXION	120		// delais pour re-essayer en cas de pb de connexion
 
 
 	/******
@@ -110,6 +111,7 @@ class Contexte : public KeepInRTC::KeepMe {
 	struct {
 		bool debug;			// Affiche des messages de debugage
 		uint32_t maxMQTT;	// Durée maximum de connexion MQTT
+		uint32_t reconnexion;	// Delais pour re-essayer en cas de pb de connexion
 	} data;
 
 public:
@@ -119,6 +121,7 @@ public:
 		if( !kir.isValid() ){	// Valeurs par défaut
 			this->data.debug = false;
 			this->data.maxMQTT = SMC_MQTT_MAX_RETRY;
+			this->data.reconnexion = DEF_DELAI_RECONNEXION;
 			this->save();
 			return true;
 		}
@@ -142,17 +145,20 @@ public:
 	uint32_t getMaxMQTT( void ){
 		return this->data.maxMQTT;
 	}
+
+	void setReconnexion( uint32_t val ){
+		this->data.reconnexion = val;
+		this->save();
+	}
+
+	uint32_t getReconnexion( void ){
+		return this->data.reconnexion;
+	}
 } ctx;
 
 	/*******
-	* Gestion de la communication
+	* Gestion des périphériques
 	********/
-#include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>	// Publication Avahi
-#include <WiFiUdp.h>		// L'OTA
-#include <ArduinoOTA.h>
-
-bool OTA;
 
 extern "C" {
   #include "user_interface.h"
@@ -163,6 +169,17 @@ ADC_MODE(ADC_VCC);	// Nécessaire pour avoir la tension d'alimentation
 #include <OWBus/DS18B20.h>
 OneWire oneWire(ONE_WIRE_BUS, true);	// Initialise la bibliothèque en activant le pullup (https://github.com/destroyedlolo/OneWire)
 OWBus bus(&oneWire);
+
+
+	/*******
+	* Gestion de la communication
+	********/
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>	// Publication Avahi
+#include <WiFiUdp.h>		// L'OTA
+#include <ArduinoOTA.h>
+
+bool OTA;
 
 WiFiClient clientWiFi;
 PubSubClient clientMQTT(clientWiFi);
@@ -208,6 +225,8 @@ bool func_status( const String & ){
 	msg += EveilInteractif.getConsigne();
 	msg += "\nTemps maximum pour la connexion MQTT : ";
 	msg += ctx.getMaxMQTT();
+	msg += "\nDelai de reconnexion : ";
+	msg += ctx.getReconnexion();
 	msg += ctx.getDebug() ? "\nMessages de Debug" : "\nPas de message de Debug";
 #ifdef DEV
 	msg += "\nFlash : ";
@@ -273,6 +292,20 @@ bool func_maxMQTT( const String &arg ){
 	return true;
 }
 
+bool func_reconnexion( const String &arg ){
+	int n = arg.toInt();
+
+	if( n > 0){
+		ctx.setReconnexion( n );
+		String msg = "Reconnexion changée à ";
+		msg += n;
+		logmsg( msg );
+	} else
+		logmsg( "Argument invalide : Reconnexion inchangée" );
+
+	return true;
+}
+
 bool func_dodo( const String & ){
 	EveilInteractif.setProchain( 0 );
 	return false;
@@ -315,6 +348,7 @@ const struct _command {
 	{ "delai", "Délai entre chaque échantillons (secondes)", func_delai },
 	{ "attente", "Attend <n> secondes l'arrivée de nouvelles commandes", func_att },
 	{ "maxMQTT", "Durée maximum d'attente pour se connecter au broker", func_maxMQTT },
+	{ "reconnexion", "Attend <n> secondes avant de tenter de se reconnecter", func_reconnexion },
 	{ "dodo", "Sort du mode interactif et place l'ESP en sommeil", func_dodo },
 	{ "reste", "Reste encore <n> secondes en mode interactif", func_reste },
 	{ "debug", "Active (1) ou non (0) les messages de debug", func_debug },
