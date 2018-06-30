@@ -40,7 +40,14 @@
 	 */
 #	define LED(x)	{ digitalWrite(LED_BUILTIN, x); }
 #endif
+
+#define ONE_WIRE_BUS 5
+
 String MQTT_Topic = String(MQTT_CLIENT) + "/";	// Topic racine
+String MQTT_VCC = MQTT_Topic + "Vcc";
+String MQTT_TempInterne = MQTT_Topic + "TempInterne";
+String MQTT_TempPiscine = MQTT_Topic + "TempPiscine";
+String MQTT_Command = MQTT_Topic + "Command";
 
 	/* Paramètres par défaut */
 	/* Durées (secondes) */
@@ -358,6 +365,21 @@ void handleMQTT(char* topic, byte* payload, unsigned int length){
 
 
 	/*******
+	* Gestion des périphériques
+	********/
+
+extern "C" {
+  #include "user_interface.h"
+}
+ADC_MODE(ADC_VCC);	// Nécessaire pour avoir la tension d'alimentation
+
+#include <OWBus.h>
+#include <OWBus/DS18B20.h>
+OneWire oneWire(ONE_WIRE_BUS, true);	// Initialise la bibliothèque en activant le pullup (https://github.com/destroyedlolo/OneWire)
+OWBus bus(&oneWire);
+
+
+	/*******
 	* Le code
 	********/
 
@@ -384,10 +406,67 @@ void setup(){
 		ESP.deepSleep( ctx.getReEssaiWiFi() );	// On ressaiera plus tard
 	}
 	LED(HIGH);
-
+	Reseau.getClient().subscribe(MQTT_Command.c_str(), 1);
 }
 
 void loop(){
+	if( Sommeil.getNext() < millis() ){	// il est temps de faire une nouvelle acquisition
+		int vcctab[3];	// Stocke les différents échantillons de Vcc
+		int nbre = 0;
+		vcctab[nbre++] = ESP.getVcc();
+
+		DS18B20 SondeTempInterne(bus, 0x2882b25e09000015);
+		DS18B20 SondePiscine( bus, 0x28ff8fbf711703c3);
+
+		float temp =  SondeTempInterne.getTemperature( false );
+		if( SondeTempInterne.isValidScratchpad() ){	// On s'assure que la sonde est présente
+#ifdef SERIAL_ENABLED
+			Serial.print("Température Interne :");
+			Serial.println( temp );
+#endif
+			Reseau.publish( MQTT_TempInterne, String( temp ).c_str() );
+			vcctab[nbre++] = ESP.getVcc();
+		}
+
+		temp = SondePiscine.getTemperature( false );
+		if( SondePiscine.isValidScratchpad() ){	// On s'assure que la sonde est présente
+#ifdef SERIAL_ENABLED
+			Serial.print("Température piscine :");
+			Serial.println( temp );
+#endif
+			Reseau.publish( MQTT_TempPiscine, String( temp ).c_str() );
+			vcctab[nbre++] = ESP.getVcc();
+		}
+
+		/* Trie des valeurs de Vcc lue */
+		for( int i = 0; i<nbre; i++ )
+			for( int j = 0; j<nbre; j++ ){
+				if(vcctab[i]>vcctab[j]){
+					int t = vcctab[i];
+			    	vcctab[i] = vcctab[j];
+				    vcctab[j] = t;
+				}
+		}
+
+		if(ctx.getDebug()){
+			String msg(nbre);
+			msg += " échantillon(s) pour Vcc :";
+			for( int i=0; i<nbre; i++ ){
+				msg += " ";
+				msg += vcctab[i];
+			}
+			Reseau.logMsg( msg );
+		}
+
+#ifdef SERIAL_ENABLED
+		Serial.print("Tension d'alimentation :");
+		Serial.println( vcctab[nbre/2] );
+#endif
+		Reseau.publish( MQTT_VCC, vcctab[nbre/2] );
+
+		Sommeil.setNext( millis() + Sommeil.getConsign() * 1e3 );	// Calcul de la prochaine acquisition
+	}
+
 	if(Reseau.connected())
 		Reseau.getClient().loop();
 
