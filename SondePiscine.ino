@@ -20,7 +20,7 @@
 	* Paramétrage
 	********/
 
-/* #define DEV	// On est mode developpement  */
+#define DEV	// On est mode developpement
 
 #ifdef DEV
 #	define MQTT_CLIENT "SondePiscine-Dev"
@@ -106,6 +106,7 @@ public:
 	}
 } ctx;
 
+
 	/*******
 	* Reseau
 	********/
@@ -122,7 +123,8 @@ SafeMQTTClient reseau( clientWiFi,
 #else
 		DOMO_SSID, DOMO_PASSWORD,	// Connexion à mon réseau domotique
 #endif
-		MQTT_CLIENT, MQTT_Topic.c_str()
+		BROKER_HOST, BROKER_PORT,
+		MQTT_CLIENT, MQTT_Topic.c_str(), false
 );
 
 
@@ -150,5 +152,9 @@ void setup(){
 }
 
 void loop(){
+	if(reseau.connected())
+		reseau.getClient().loop();
+
+	delay( 500 );
 }
 
