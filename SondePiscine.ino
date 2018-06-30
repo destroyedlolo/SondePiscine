@@ -68,6 +68,43 @@ KeepInRTC kir;	// Gestionnaire de la RTC
 TemporalConsign Sommeil( kir );			// Sommeil entre 2 acquisitions
 TemporalConsign EveilInteractif( kir );	// Temps pendant lequel il faut rester éveillé en attendant des ordres.
 
+class Contexte : public KeepInRTC::KeepMe {
+	struct {
+		bool debug;				// Affiche des messages de debugage
+		uint32_t reessaiWiFi;	// Délai avant de retester la connexion au WiFi
+	} data;
+
+public:
+	Contexte() : KeepInRTC::KeepMe( kir, (uint32_t *)&this->data, sizeof(this->data) ) {}
+
+	bool begin( void ){
+		if( !kir.isValid() ){
+			this->data.debug = false;
+			this->data.reessaiWiFi = DEF_DELAI_RECONNEXION;
+			this->save();
+			return true;
+		}
+		return false;
+	}
+
+	void setDebug( bool adbg ){
+		this->data.debug = adbg; 
+		this->save();
+	}
+
+	bool getDebug( void ){
+		return this->data.debug;
+	}
+
+	void setReEssaiWiFi( uint32_t val ){
+		this->data.reessaiWiFi = val;
+		this->save();
+	}
+
+	uint32_t getReEssaiWiFi( void ){
+		return this->data.reessaiWiFi;
+	}
+} ctx;
 
 	/*******
 	* Reseau
@@ -102,9 +139,13 @@ void setup(){
 	pinMode(LED_BUILTIN, OUTPUT);
 #endif
 
-
+	LED(LOW);
 	Duration dwifi;
-	reseau.connectWiFi(dwifi);
+	if(!reseau.connectWiFi(dwifi)){	// Impossible de se connecter au WiFi
+		LED(HIGH);
+		ESP.deepSleep( ctx.getReEssaiWiFi() );	// On ressaiera plus tard
+	}
+	LED(HIGH);
 
 }
 
