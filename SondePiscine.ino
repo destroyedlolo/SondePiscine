@@ -117,7 +117,7 @@ public:
 #include <LFUtilities/SafeMQTTClient.h>
 
 WiFiClient clientWiFi;
-SafeMQTTClient reseau( clientWiFi, 
+SafeMQTTClient Reseau( clientWiFi, 
 #ifdef DEV
 		WIFI_SSID, WIFI_PASSWORD,	// Connexion à mon réseau domestique
 #else
@@ -126,6 +126,125 @@ SafeMQTTClient reseau( clientWiFi,
 		BROKER_HOST, BROKER_PORT,
 		MQTT_CLIENT, MQTT_Topic.c_str(), false
 );
+
+
+	/*******
+	* OnTheAir
+	********/
+
+bool OTA;
+
+
+	/*******
+	* Gestion des commandes MQTT
+	********/
+
+bool func_status( const String & ){
+	String msg = "Délai acquisition : ";
+	msg += Sommeil.getConsign();
+	msg += "\nEveil suite à commande : ";
+	msg += EveilInteractif.getConsign();
+	msg += "\nTemps maximum pour la connexion MQTT : ";
+	msg += Reseau.getMQTTMaxTries();
+	msg += "\nTemps maximum de reconnexion WiFi : ";
+	msg += ctx.getReEssaiWiFi();
+	msg += ctx.getDebug() ? "\nMessages de Debug" : "\nPas de message de Debug";
+#ifdef DEV
+	msg += "\nFlash : ";
+	msg += ESP.getFlashChipSize();
+	msg += " (real : ";
+	msg += ESP.getFlashChipRealSize();
+	msg += ")";
+#endif
+	msg += "\nSketch : ";
+	msg += 	ESP.getSketchSize();
+	msg += ", Libre : ";
+	msg += ESP.getFreeSketchSpace();
+	msg += "\nHeap :";
+	msg += ESP.getFreeHeap();
+	msg += "\nAdresse IP :";
+	msg += WiFi.localIP().toString();
+
+	msg += OTA ? "\nOTA en attente": "\nOTA désactivé";
+
+	Reseau.logMsg( msg );
+	return true;
+}
+
+const struct _command {
+	const char *nom;
+	const char *desc;
+	bool (*func)( const String & );	// true : raz du timer d'éveil
+} commands[] = {
+	{ "status", "Configuration courante", func_status },
+/*
+	{ "delai", "Délai entre chaque échantillons (secondes)", func_delai },
+	{ "attente", "Attend <n> secondes l'arrivée de nouvelles commandes", func_att },
+	{ "maxMQTT", "Durée maximum d'attente pour se connecter au broker", func_maxMQTT },
+	{ "reconnexion", "Attend <n> secondes avant de tenter de se reconnecter", func_reconnexion },
+	{ "dodo", "Sort du mode interactif et place l'ESP en sommeil", func_dodo },
+	{ "reste", "Reste encore <n> secondes en mode interactif", func_reste },
+	{ "debug", "Active (1) ou non (0) les messages de debug", func_debug },
+	{ "OTA", "Active l'OTA jusqu'au prochain reboot", func_OTA },
+*/
+	{ NULL, NULL, NULL }
+};
+
+void handleMQTT(char* topic, byte* payload, unsigned int length){
+	String ordre;
+	for(unsigned int i=0;i<length;i++)
+		ordre += (char)payload[i];
+
+#	ifdef SERIAL_ENABLED
+	Serial.print( "Message [" );
+	Serial.print( topic );
+	Serial.print( "] : '" );
+	Serial.print( ordre );
+	Serial.println( "'" );
+#	endif
+
+		/* Extrait la commande et son argument */
+	const int idx = ordre.indexOf(' ');
+	String arg;
+	if(idx != -1){
+		arg = ordre.substring(idx + 1);
+		ordre = ordre.substring(0, idx);
+	}
+
+	bool raz = true;	// Faut-il faire un raz du timer interactif
+	if( ordre == "?" ){	// Liste des commandes connues
+		String rep;
+		if( arg.length() ) {
+			rep = arg + " : ";
+
+			for( const struct _command *cmd = commands; cmd->nom; cmd++ ){
+				if( arg == cmd->nom && cmd->desc ){
+					rep += cmd->desc;
+					break;	// Pas besoin de continuer la commande a été trouvée
+				}
+			}
+		} else {
+			rep = "Liste des commandes reconnues :";
+
+			for( const struct _command *cmd = commands; cmd->nom; cmd++ ){
+				rep += ' ';
+				rep += cmd->nom;
+			}
+		}
+
+		Reseau.logMsg( rep );
+	} else {
+		for( const struct _command *cmd = commands; cmd->nom; cmd++ ){
+			if( ordre == cmd->nom && cmd->func ){
+				raz = cmd->func( arg );
+				break;
+			}
+		}
+	}
+
+	if( raz )		// Raz du timer d'éveil
+		EveilInteractif.setNext( millis() + EveilInteractif.getConsign() * 1e3 );
+}
 
 
 	/*******
@@ -141,9 +260,16 @@ void setup(){
 	pinMode(LED_BUILTIN, OUTPUT);
 #endif
 
+	if( Sommeil.begin(DEF_DUREE_SOMMEIL) | EveilInteractif.begin(DEF_EVEILLE) | ctx.begin() ){	// ou logique sinon le begin() d'EveilInteractif ne sera jamais appelé
+#ifdef SERIAL_ENABLED
+		Serial.println("Valeur par défaut");
+#endif
+	}
+
+	Reseau.getClient().setCallback( handleMQTT );
 	LED(LOW);
 	Duration dwifi;
-	if(!reseau.connectWiFi(dwifi)){	// Impossible de se connecter au WiFi
+	if(!Reseau.connectWiFi(dwifi)){	// Impossible de se connecter au WiFi
 		LED(HIGH);
 		ESP.deepSleep( ctx.getReEssaiWiFi() );	// On ressaiera plus tard
 	}
@@ -152,8 +278,8 @@ void setup(){
 }
 
 void loop(){
-	if(reseau.connected())
-		reseau.getClient().loop();
+	if(Reseau.connected())
+		Reseau.getClient().loop();
 
 	delay( 500 );
 }
