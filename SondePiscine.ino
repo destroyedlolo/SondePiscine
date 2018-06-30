@@ -58,12 +58,15 @@ String MQTT_Topic = String(MQTT_CLIENT) + "/";	// Topic racine
 	* Gestion des configurations
 	********/
 
+#include <ESP8266WiFi.h>
+
 #include <KeepInRTC.h>
 KeepInRTC kir;	// Gestionnaire de la RTC
 
 #include <LFUtilities.h>
 #include <LFUtilities/Duration.h>
 #include <LFUtilities/TemporalConsign.h>
+#include <LFUtilities/SafeMQTTClient.h>
 
 TemporalConsign Sommeil( kir );			// Sommeil entre 2 acquisitions
 TemporalConsign EveilInteractif( kir );	// Temps pendant lequel il faut rester éveillé en attendant des ordres.
@@ -71,6 +74,7 @@ TemporalConsign EveilInteractif( kir );	// Temps pendant lequel il faut rester �
 class Contexte : public KeepInRTC::KeepMe {
 	struct {
 		bool debug;				// Affiche des messages de debugage
+		uint32_t maxWiFi;		// Temps maximum pour se connecter au WiFi
 		uint32_t reessaiWiFi;	// Délai avant de retester la connexion au WiFi
 	} data;
 
@@ -81,6 +85,7 @@ public:
 		if( !kir.isValid() ){
 			this->data.debug = false;
 			this->data.reessaiWiFi = DEF_DELAI_RECONNEXION;
+			this->data.maxWiFi = SMC_WIFI_MAX_RETRY;
 			this->save();
 			return true;
 		}
@@ -94,6 +99,15 @@ public:
 
 	bool getDebug( void ){
 		return this->data.debug;
+	}
+
+	void setMaxWiFi( uint32_t val ){
+		this->data.maxWiFi = val;
+		this->save();
+	}
+
+	uint32_t getMaxWiFi( void ){
+		return this->data.maxWiFi;
 	}
 
 	void setReEssaiWiFi( uint32_t val ){
@@ -111,10 +125,7 @@ public:
 	* Reseau
 	********/
 
-#include <ESP8266WiFi.h>
-
 #include <Maison.h>		// Paramètres de mon réseau
-#include <LFUtilities/SafeMQTTClient.h>
 
 WiFiClient clientWiFi;
 SafeMQTTClient Reseau( clientWiFi, 
@@ -140,14 +151,16 @@ bool OTA;
 	********/
 
 bool func_status( const String & ){
-	String msg = "Délai acquisition : ";
+	String msg = "Délai entre acquisitions : ";
 	msg += Sommeil.getConsign();
 	msg += "\nEveil suite à commande : ";
 	msg += EveilInteractif.getConsign();
+	msg += "\nTemps maximum de reconnexion WiFi : ";
+	msg += ctx.getMaxWiFi();
+	msg += "\nDelai avant de tenter une reconnexion WiFi : ";
+	msg += ctx.getReEssaiWiFi();
 	msg += "\nTemps maximum pour la connexion MQTT : ";
 	msg += Reseau.getMQTTMaxTries();
-	msg += "\nTemps maximum de reconnexion WiFi : ";
-	msg += ctx.getReEssaiWiFi();
 	msg += ctx.getDebug() ? "\nMessages de Debug" : "\nPas de message de Debug";
 #ifdef DEV
 	msg += "\nFlash : ";
@@ -171,20 +184,117 @@ bool func_status( const String & ){
 	return true;
 }
 
+bool func_delai( const String &arg ){
+	int n = arg.toInt();
+
+	if( n > 0){
+		Sommeil.setConsign( n );
+		String msg = "Délai changé à ";
+		msg += n;
+		Reseau.logMsg( msg );
+	} else
+		Reseau.logMsg( "Argument invalide : Délai inchangé" );
+
+	return true;
+}
+
+bool func_att( const String &arg ){
+	int n = arg.toInt();
+
+	if( n > 0){
+		EveilInteractif.setConsign( n );
+		String msg = "Attente changée à ";
+		msg += n;
+		Reseau.logMsg( msg );
+	} else
+		Reseau.logMsg( "Argument invalide : Attente inchangée" );
+
+	return true;
+}
+
+bool func_maxWiFi( const String &arg ){
+	int n = arg.toInt();
+
+	if( n > 0){
+		ctx.setMaxWiFi( n );
+		String msg = "maxWiFi changée à ";
+		msg += n;
+		Reseau.logMsg( msg );
+	} else
+		Reseau.logMsg( "Argument invalide : maxWiFi inchangée" );
+
+	return true;
+}
+
+bool func_recoWiFi( const String &arg ){
+	int n = arg.toInt();
+
+	if( n > 0){
+		ctx.setReEssaiWiFi( n );
+		String msg = "Delai entre 2 tentative de connexion WiFi changée à ";
+		msg += n;
+		Reseau.logMsg( msg );
+	} else
+		Reseau.logMsg( "Argument invalide : recoWiFi inchangée" );
+
+	return true;
+}
+
+bool func_maxMQTT( const String &arg ){
+	int n = arg.toInt();
+
+	if( n > 0){
+		Reseau.setMQTTMaxTries( n );
+		String msg = "maxMQTT changée à ";
+		msg += n;
+		Reseau.logMsg( msg );
+	} else
+		Reseau.logMsg( "Argument invalide : maxMQTT inchangée" );
+
+	return true;
+}
+
+bool func_dodo( const String & ){
+	EveilInteractif.setNext( 0 );
+	return false;
+}
+
+bool func_reste( const String &arg ){
+	int n = arg.toInt();
+	EveilInteractif.setNext( millis() + n*1e3 );
+
+	String msg = "Reste encore éveillé pendant ";
+	msg += n;
+	msg += " seconde";
+	if( n > 1 )
+		msg += 's';
+	
+	Reseau.logMsg( msg );
+	return false;
+}
+
+bool func_debug( const String &arg ){
+	ctx.setDebug( arg.toInt() ? true : false );
+
+	Reseau.logMsg( ctx.getDebug() ? "Debug activé" : "Debug inactif");
+	return true;
+}
+
 const struct _command {
 	const char *nom;
 	const char *desc;
 	bool (*func)( const String & );	// true : raz du timer d'éveil
 } commands[] = {
 	{ "status", "Configuration courante", func_status },
-/*
 	{ "delai", "Délai entre chaque échantillons (secondes)", func_delai },
 	{ "attente", "Attend <n> secondes l'arrivée de nouvelles commandes", func_att },
+	{ "maxWiFi", "Durée maximum d'attente pour se connecter au WiFi", func_maxWiFi },
+	{ "recoWiFi", "Attend <n> secondes avant de tenter de se reconnecter au WiFi", func_recoWiFi },
 	{ "maxMQTT", "Durée maximum d'attente pour se connecter au broker", func_maxMQTT },
-	{ "reconnexion", "Attend <n> secondes avant de tenter de se reconnecter", func_reconnexion },
 	{ "dodo", "Sort du mode interactif et place l'ESP en sommeil", func_dodo },
 	{ "reste", "Reste encore <n> secondes en mode interactif", func_reste },
 	{ "debug", "Active (1) ou non (0) les messages de debug", func_debug },
+/*
 	{ "OTA", "Active l'OTA jusqu'au prochain reboot", func_OTA },
 */
 	{ NULL, NULL, NULL }
@@ -269,7 +379,7 @@ void setup(){
 	Reseau.getClient().setCallback( handleMQTT );
 	LED(LOW);
 	Duration dwifi;
-	if(!Reseau.connectWiFi(dwifi)){	// Impossible de se connecter au WiFi
+	if(!Reseau.connectWiFi(dwifi, ctx.getMaxWiFi() )){	// Impossible de se connecter au WiFi
 		LED(HIGH);
 		ESP.deepSleep( ctx.getReEssaiWiFi() );	// On ressaiera plus tard
 	}
