@@ -149,6 +149,9 @@ SafeMQTTClient Reseau( clientWiFi,
 	/*******
 	* OnTheAir
 	********/
+#include <ESP8266mDNS.h>	// Publication Avahi
+#include <WiFiUdp.h>		// L'OTA
+#include <ArduinoOTA.h>
 
 bool OTA;
 
@@ -287,6 +290,13 @@ bool func_debug( const String &arg ){
 	return true;
 }
 
+bool func_OTA( const String & ){
+	Reseau.logMsg( "OTA activé" );
+	OTA = true;
+	ArduinoOTA.begin();
+	return true;
+}
+
 const struct _command {
 	const char *nom;
 	const char *desc;
@@ -301,9 +311,7 @@ const struct _command {
 	{ "dodo", "Sort du mode interactif et place l'ESP en sommeil", func_dodo },
 	{ "reste", "Reste encore <n> secondes en mode interactif", func_reste },
 	{ "debug", "Active (1) ou non (0) les messages de debug", func_debug },
-/*
 	{ "OTA", "Active l'OTA jusqu'au prochain reboot", func_OTA },
-*/
 	{ NULL, NULL, NULL }
 };
 
@@ -398,6 +406,27 @@ void setup(){
 #endif
 	}
 
+	ArduinoOTA.setHostname(MQTT_CLIENT);
+	ArduinoOTA.onError([](ota_error_t error) {
+		String msg = "Error :";
+		msg += error;
+		switch( error ){
+		case OTA_AUTH_ERROR:
+			msg += " (Auth Failed)"; break;
+		case OTA_BEGIN_ERROR:
+			msg += " (Begin Failed)"; break;
+		case OTA_CONNECT_ERROR:
+			msg += " (Connect Failed)"; break;
+		case OTA_RECEIVE_ERROR:
+			msg += " (Receive Failed)"; break;
+		case OTA_END_ERROR:
+			msg += " (End Failed)"; break;
+		};
+
+		Reseau.logMsg( msg );
+  	});
+	OTA = false;
+
 	Reseau.getClient().setCallback( handleMQTT );
 	LED(LOW);
 	Duration dwifi;
@@ -470,6 +499,14 @@ void loop(){
 	if(Reseau.connected())
 		Reseau.getClient().loop();
 
-	delay( 500 );
-}
+	if(OTA)
+		ArduinoOTA.handle();
 
+	if( EveilInteractif.getNext() < millis() ){	// Pas de session interactive en cour
+#ifdef SERIAL_ENABLED
+			Serial.println( "Dodo ..." );
+#endif
+		ESP.deepSleep( Sommeil.getConsign() * 1e6);
+	} else 
+		delay( 5000 );	// Attend 5s avant de vérifier à nouveau s'il y a des commandes MQTT
+}
