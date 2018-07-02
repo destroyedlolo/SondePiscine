@@ -1,6 +1,6 @@
 /* SondePiscine
  *
- *	Simple sonde alimentée par des cellules photoélectriques 
+ *	Simple sonde alimentée par des cellules photoélectriques /
  *	et qui revoie par MQTT la température de l'eau de la piscine.
  *
  *	provided by "Laurent Faillie"
@@ -20,7 +20,7 @@
 	* Paramétrage
 	********/
 
-#define DEV	// On est mode developpement
+/* #define DEV	*/ // On est mode developpement
 
 #ifdef DEV
 #	define MQTT_CLIENT "SondePiscine-Dev"
@@ -163,15 +163,15 @@ bool OTA;
 bool func_status( const String & ){
 	String msg = "Délai entre acquisitions : ";
 	msg += Sommeil.getConsign();
-	msg += "\nEveil suite à commande : ";
+	msg += " Sec\nEveil suite à commande : ";
 	msg += EveilInteractif.getConsign();
-	msg += "\nTemps maximum de reconnexion WiFi : ";
-	msg += ctx.getMaxWiFi();
-	msg += "\nDelai avant de tenter une reconnexion WiFi : ";
+	msg += " Sec\nDelai avant de tenter une reconnexion WiFi : ";
 	msg += ctx.getReEssaiWiFi();
-	msg += "\nTemps maximum pour la connexion MQTT : ";
+	msg += " Sec\nTemps maximum de reconnexion WiFi : ";
+	msg += ctx.getMaxWiFi();
+	msg += " mS\nTemps maximum pour la connexion MQTT : ";
 	msg += Reseau.getMQTTMaxTries();
-	msg += ctx.getDebug() ? "\nMessages de Debug" : "\nPas de message de Debug";
+	msg += ctx.getDebug() ? " mS\nMessages de Debug" : " mS\nPas de message de Debug";
 #ifdef DEV
 	msg += "\nFlash : ";
 	msg += ESP.getFlashChipSize();
